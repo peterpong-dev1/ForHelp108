@@ -1,19 +1,20 @@
-# windows-classic-task.yml
-trigger: [ main ]
+trigger:
+- main
+
+variables:
+  AZ_SUBSCRIPTION: 'POC-KBSB'              # your Azure service connection name
+  AZ_RESOURCE_GROUP: 'poc-rg'              # your resource group
+  AZ_APP: 'pocfunctionapp'                 # your Function App name
+  ARTIFACT_NAME: 'drop'
 
 pool:
   vmImage: 'windows-latest'
 
-variables:
-  AZ_SUBSCRIPTION: 'My-Service-Connection'     # DevOps service connection
-  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
-  AZ_RG: 'rg-func-win-classic'
-  AZ_APP: 'func-win-classic-app'               # Windows Function App (classic)
-  ARTIFACT_NAME: 'drop'
-
 steps:
+# 1️⃣ Checkout code
 - checkout: self
 
+# 2️⃣ Build using Maven
 - task: Maven@4
   displayName: 'Build (mvn clean package)'
   inputs:
@@ -22,7 +23,15 @@ steps:
     options: '-DskipTests'
     jdkVersionOption: '1.21'
 
-# Find Functions staging dir: target/azure-functions/<appName>/
+# 3️⃣ Download latest Datadog Java agent
+- powershell: |
+    Write-Host "Downloading latest Datadog Java agent..."
+    $targetPath = "$(Build.SourcesDirectory)\datadog"
+    New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+    Invoke-WebRequest -Uri "https://dtdg.co/latest-java-tracer" -OutFile "$targetPath\dd-java-agent.jar"
+  displayName: 'Download Datadog Java Agent'
+
+# 4️⃣ Find Azure Functions staging directory (created by Maven)
 - powershell: |
     $staging = Get-ChildItem -Recurse -Directory |
       Where-Object { $_.FullName -match 'target\\azure-functions\\[^\\]+$' } |
@@ -31,6 +40,13 @@ steps:
     echo "##vso[task.setvariable variable=STAGING_DIR]$($staging.FullName)"
   displayName: 'Locate staging directory'
 
+# 5️⃣ Copy Datadog JAR into staging dir
+- powershell: |
+    Write-Host "Copying Datadog agent to staging folder..."
+    Copy-Item "$(Build.SourcesDirectory)\datadog\dd-java-agent.jar" -Destination "$(STAGING_DIR)\datadog" -Force
+  displayName: 'Copy Datadog agent to staging directory'
+
+# 6️⃣ Create ZIP for deployment
 - task: ArchiveFiles@2
   displayName: 'Create ZIP from staging'
   inputs:
@@ -39,13 +55,14 @@ steps:
     archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
     replaceExistingArchive: true
 
+# 7️⃣ Publish build artifact
 - task: PublishBuildArtifacts@1
   displayName: 'Publish artifact'
   inputs:
     PathtoPublish: '$(Build.ArtifactStagingDirectory)'
     ArtifactName: '$(ARTIFACT_NAME)'
 
-# Deploy ZIP via Kudu (task handles classic plans well)
+# 8️⃣ Deploy ZIP to Azure Function App
 - task: AzureFunctionApp@2
   displayName: 'Deploy to Windows Function App (classic)'
   inputs:
@@ -53,7 +70,7 @@ steps:
     appName: '$(AZ_APP)'
     package: '$(Build.ArtifactStagingDirectory)/functions.zip'
 
-# Deterministic trigger registration
+# 9️⃣ Sync triggers
 - task: AzureCLI@2
   displayName: 'Sync triggers'
   inputs:
@@ -62,312 +79,4 @@ steps:
     scriptLocation: inlineScript
     inlineScript: |
       az rest --method post `
-        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
-
-
-
-======
-
-# windows-classic-cli.yml
-trigger: [ main ]
-
-pool:
-  vmImage: 'windows-latest'
-
-variables:
-  AZ_SUBSCRIPTION: 'My-Service-Connection'
-  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
-  AZ_RG: 'rg-func-win-classic'
-  AZ_APP: 'func-win-classic-app'
-
-steps:
-- checkout: self
-
-- task: Maven@4
-  displayName: 'Build (mvn clean package)'
-  inputs:
-    mavenPomFile: 'pom.xml'
-    goals: 'clean package'
-    options: '-DskipTests'
-    jdkVersionOption: '1.21'
-
-- powershell: |
-    $staging = Get-ChildItem -Recurse -Directory |
-      Where-Object { $_.FullName -match 'target\\azure-functions\$begin:math:display$^\\$end:math:display$+$' } |
-      Select-Object -First 1
-    if (-not $staging) { throw "Functions staging folder not found." }
-    $zipOut = "$(Build.ArtifactStagingDirectory)\functions.zip"
-    if (Test-Path $zipOut) { Remove-Item $zipOut -Force }
-    Compress-Archive -Path (Join-Path $staging.FullName '*') -DestinationPath $zipOut -Force
-    Write-Host "##vso[task.setvariable variable=ZIP_PATH]$zipOut"
-  displayName: 'Zip staging (PowerShell)'
-
-- task: AzureCLI@2
-  displayName: 'Deploy (config-zip) + Sync triggers'
-  inputs:
-    azureSubscription: '$(AZ_SUBSCRIPTION)'
-    scriptType: ps
-    scriptLocation: inlineScript
-    inlineScript: |
-      az functionapp deployment source config-zip -g "$(AZ_RG)" -n "$(AZ_APP)" --src "$(ZIP_PATH)"
-      az rest --method post `
-        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
-
-
-=======
-
-# linux-classic-task.yml
-trigger: [ main ]
-
-pool:
-  vmImage: 'ubuntu-latest'
-
-variables:
-  AZ_SUBSCRIPTION: 'My-Service-Connection'
-  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
-  AZ_RG: 'rg-func-linux-classic'
-  AZ_APP: 'func-linux-classic-app'
-  ARTIFACT_NAME: 'drop'
-
-steps:
-- checkout: self
-
-- task: Maven@4
-  displayName: 'Build (mvn clean package)'
-  inputs:
-    mavenPomFile: 'pom.xml'
-    goals: 'clean package'
-    options: '-DskipTests'
-    jdkVersionOption: '1.21'
-
-# Find staging and zip with task
-- bash: |
-    staging=$(find . -path "*/target/azure-functions/*" -type d -maxdepth 5 | head -n 1)
-    if [ -z "$staging" ]; then echo "Staging folder not found"; exit 1; fi
-    echo "##vso[task.setvariable variable=STAGING_DIR]$staging"
-  displayName: 'Locate staging directory'
-
-- task: ArchiveFiles@2
-  displayName: 'Create ZIP from staging'
-  inputs:
-    rootFolderOrFile: '$(STAGING_DIR)'
-    includeRootFolder: false
-    archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
-    replaceExistingArchive: true
-
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish artifact'
-  inputs:
-    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: '$(ARTIFACT_NAME)'
-
-- task: AzureFunctionApp@2
-  displayName: 'Deploy to Linux Function App (classic)'
-  inputs:
-    azureSubscription: '$(AZ_SUBSCRIPTION)'
-    appName: '$(AZ_APP)'
-    package: '$(Build.ArtifactStagingDirectory)/functions.zip'
-
-- task: AzureCLI@2
-  displayName: 'Sync triggers'
-  inputs:
-    azureSubscription: '$(AZ_SUBSCRIPTION)'
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az rest --method post \
-        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
-
-======
-# linux-flex-consumption.yml
-trigger: [ main ]
-
-pool:
-  vmImage: 'ubuntu-latest'
-
-variables:
-  AZ_SUBSCRIPTION: 'My-Service-Connection'
-  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
-  AZ_RG: 'rg-func-linux-flex'
-  AZ_APP: 'func-linux-flex-app'     # Flex Function App (Linux only)
-
-steps:
-- checkout: self
-
-# 1️⃣ Build
-- task: Maven@4
-  displayName: 'Build Java Azure Function'
-  inputs:
-    mavenPomFile: 'pom.xml'
-    goals: 'clean package'
-    options: '-DskipTests'
-    jdkVersionOption: '1.21'
-
-# 2️⃣ Zip the Functions staging folder
-- bash: |
-    staging=$(find . -path "*/target/azure-functions/*" -type d -maxdepth 5 | head -n 1)
-    if [ -z "$staging" ]; then echo "Staging folder not found"; exit 1; fi
-    zipOut="$(dirname "$staging")/$(basename "$staging").zip"
-    (cd "$staging" && zip -r "$zipOut" .)
-    echo "##vso[task.setvariable variable=ZIP_PATH]$zipOut"
-  displayName: 'Create ZIP package'
-
-# 3️⃣ Deploy with OneDeploy
-- task: AzureCLI@2
-  displayName: 'Deploy ZIP to Flex Function App'
-  inputs:
-    azureSubscription: '$(AZ_SUBSCRIPTION)'
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      # No WEBSITE_RUN_FROM_PACKAGE in Flex
-      az functionapp deploy --src-path "$(ZIP_PATH)" --type zip -g "$(AZ_RG)" -n "$(AZ_APP)"
-
-# 4️⃣ Sync triggers (must-have for Cosmos DB / Service Bus)
-- task: AzureCLI@2
-  displayName: 'Sync triggers (Flex)'
-  inputs:
-    azureSubscription: '$(AZ_SUBSCRIPTION)'
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az rest --method post \
-        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
-
-===
-
-
-Perfect 👌 — we’ll handle this in two clean phases.
-Let’s start with Phase 1: Project changes (so your Function App can emit Datadog-compatible logs).
-
-⸻
-
-⚙️ PHASE 1: Project-level changes (for Datadog Java integration)
-
-We’ll focus on:
-	1.	Dependencies (pom.xml)
-	2.	Logger setup (SLF4J + Logback)
-	3.	Optional: JSON-format logs
-	4.	Environment readiness
-
-⸻
-
-🧩 Step 1: Add dependencies to pom.xml
-
-Add these inside your <dependencies> block:
-
-<!-- SLF4J API -->
-<dependency>
-    <groupId>org.slf4j</groupId>
-    <artifactId>slf4j-api</artifactId>
-    <version>2.0.13</version>
-</dependency>
-
-<!-- Logback implementation for SLF4J -->
-<dependency>
-    <groupId>ch.qos.logback</groupId>
-    <artifactId>logback-classic</artifactId>
-    <version>1.4.14</version>
-</dependency>
-
-<!-- Optional: JSON encoder for structured logs -->
-<dependency>
-    <groupId>net.logstash.logback</groupId>
-    <artifactId>logstash-logback-encoder</artifactId>
-    <version>7.4</version>
-</dependency>
-
-🟢 These ensure your Function uses SLF4J (the only format Datadog automatically understands).
-
-⸻
-
-🧱 Step 2: Add logback.xml to your resources
-
-Create a new file at:
-
-src/main/resources/logback.xml
-
-Add this configuration (Datadog-friendly JSON):
-
-<configuration>
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder" />
-    </appender>
-
-    <root level="INFO">
-        <appender-ref ref="CONSOLE" />
-    </root>
-</configuration>
-
-This makes sure every log (from your function, Datadog agent, etc.) is structured as JSON and easily parsed by Datadog.
-
-⸻
-
-🪵 Step 3: Use SLF4J logger in your Function
-
-Instead of:
-
-context.getLogger().info("My log message");
-
-Use:
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-public class CosmosDbTriggerFunction {
-    private static final Logger logger = LoggerFactory.getLogger(CosmosDbTriggerFunction.class);
-
-    @FunctionName("CosmosChangeFeedFunction")
-    public void run(@CosmosDBTrigger(
-            name = "input",
-            databaseName = "%COSMOS_DB%",
-            containerName = "%COSMOS_CONTAINER%",
-            createLeaseContainerIfNotExists = true,
-            connection = "COSMOS_CONN"
-    ) List<Map<String, Object>> docs, final ExecutionContext context) {
-
-        logger.info("✅ Function triggered. Processing {} document(s)...", docs.size());
-        try {
-            for (Map<String, Object> doc : docs) {
-                logger.info("Document: {}", doc);
-            }
-        } catch (Exception e) {
-            logger.error("❌ Error processing documents: {}", e.getMessage(), e);
-        }
-    }
-}
-
-Datadog will now automatically capture logger.info() and logger.error() entries.
-
-⸻
-
-🧰 Step 4: Confirm environment setup (you can do this later)
-
-In Azure Portal → Function App → Configuration → Application Settings, make sure these exist:
-
-Name	Value	Notes
-DD_API_KEY	your Datadog API key	from your Datadog account
-DD_SITE	datadoghq.com or ap1.datadoghq.com	depends on your region
-JAVA_OPTS	-javaagent=D:\home\site\wwwroot\datadog\dd-java-agent.jar	enables Datadog agent
-DD_ENV	dev or poc	for environment tagging
-DD_SERVICE	cosmos-func-poc	name for logs in Datadog
-DD_VERSION	1.0.0	optional tagging
-
-
-⸻
-
-✅ Summary of Project Changes
-
-File	Purpose
-pom.xml	Add SLF4J + Logback + encoder
-logback.xml	Structured JSON logging
-CosmosDbTriggerFunction.java	Use LoggerFactory instead of context.getLogger()
-Environment variables	Connect Java agent and send logs to Datadog
-
-
-⸻
-
-Once you complete this and rebuild locally (mvn clean package),
-you can deploy via pipeline later — I’ll give you the pipeline changes (Phase 2) after this is done.
-
-Would you like me to show you how to include the Datadog agent jar in your project folder (so the pipeline picks it up automatically)?
+        --url "https://management.azure.com/subscriptions/$(AZ_SUBSCRIPTION)/resourceGroups/$(AZ_RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2022-03-01"
