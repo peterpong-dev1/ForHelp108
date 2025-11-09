@@ -234,3 +234,140 @@ steps:
       az rest --method post \
         --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
 
+===
+
+
+Perfect 👌 — we’ll handle this in two clean phases.
+Let’s start with Phase 1: Project changes (so your Function App can emit Datadog-compatible logs).
+
+⸻
+
+⚙️ PHASE 1: Project-level changes (for Datadog Java integration)
+
+We’ll focus on:
+	1.	Dependencies (pom.xml)
+	2.	Logger setup (SLF4J + Logback)
+	3.	Optional: JSON-format logs
+	4.	Environment readiness
+
+⸻
+
+🧩 Step 1: Add dependencies to pom.xml
+
+Add these inside your <dependencies> block:
+
+<!-- SLF4J API -->
+<dependency>
+    <groupId>org.slf4j</groupId>
+    <artifactId>slf4j-api</artifactId>
+    <version>2.0.13</version>
+</dependency>
+
+<!-- Logback implementation for SLF4J -->
+<dependency>
+    <groupId>ch.qos.logback</groupId>
+    <artifactId>logback-classic</artifactId>
+    <version>1.4.14</version>
+</dependency>
+
+<!-- Optional: JSON encoder for structured logs -->
+<dependency>
+    <groupId>net.logstash.logback</groupId>
+    <artifactId>logstash-logback-encoder</artifactId>
+    <version>7.4</version>
+</dependency>
+
+🟢 These ensure your Function uses SLF4J (the only format Datadog automatically understands).
+
+⸻
+
+🧱 Step 2: Add logback.xml to your resources
+
+Create a new file at:
+
+src/main/resources/logback.xml
+
+Add this configuration (Datadog-friendly JSON):
+
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder" />
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+</configuration>
+
+This makes sure every log (from your function, Datadog agent, etc.) is structured as JSON and easily parsed by Datadog.
+
+⸻
+
+🪵 Step 3: Use SLF4J logger in your Function
+
+Instead of:
+
+context.getLogger().info("My log message");
+
+Use:
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class CosmosDbTriggerFunction {
+    private static final Logger logger = LoggerFactory.getLogger(CosmosDbTriggerFunction.class);
+
+    @FunctionName("CosmosChangeFeedFunction")
+    public void run(@CosmosDBTrigger(
+            name = "input",
+            databaseName = "%COSMOS_DB%",
+            containerName = "%COSMOS_CONTAINER%",
+            createLeaseContainerIfNotExists = true,
+            connection = "COSMOS_CONN"
+    ) List<Map<String, Object>> docs, final ExecutionContext context) {
+
+        logger.info("✅ Function triggered. Processing {} document(s)...", docs.size());
+        try {
+            for (Map<String, Object> doc : docs) {
+                logger.info("Document: {}", doc);
+            }
+        } catch (Exception e) {
+            logger.error("❌ Error processing documents: {}", e.getMessage(), e);
+        }
+    }
+}
+
+Datadog will now automatically capture logger.info() and logger.error() entries.
+
+⸻
+
+🧰 Step 4: Confirm environment setup (you can do this later)
+
+In Azure Portal → Function App → Configuration → Application Settings, make sure these exist:
+
+Name	Value	Notes
+DD_API_KEY	your Datadog API key	from your Datadog account
+DD_SITE	datadoghq.com or ap1.datadoghq.com	depends on your region
+JAVA_OPTS	-javaagent=D:\home\site\wwwroot\datadog\dd-java-agent.jar	enables Datadog agent
+DD_ENV	dev or poc	for environment tagging
+DD_SERVICE	cosmos-func-poc	name for logs in Datadog
+DD_VERSION	1.0.0	optional tagging
+
+
+⸻
+
+✅ Summary of Project Changes
+
+File	Purpose
+pom.xml	Add SLF4J + Logback + encoder
+logback.xml	Structured JSON logging
+CosmosDbTriggerFunction.java	Use LoggerFactory instead of context.getLogger()
+Environment variables	Connect Java agent and send logs to Datadog
+
+
+⸻
+
+Once you complete this and rebuild locally (mvn clean package),
+you can deploy via pipeline later — I’ll give you the pipeline changes (Phase 2) after this is done.
+
+Would you like me to show you how to include the Datadog agent jar in your project folder (so the pipeline picks it up automatically)?
