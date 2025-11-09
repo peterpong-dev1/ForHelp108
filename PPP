@@ -1,81 +1,236 @@
-Here you go — clean, correct files for Java 21 + Functions v4.
+# windows-classic-task.yml
+trigger: [ main ]
 
-pom.xml
+pool:
+  vmImage: 'windows-latest'
 
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+variables:
+  AZ_SUBSCRIPTION: 'My-Service-Connection'     # DevOps service connection
+  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
+  AZ_RG: 'rg-func-win-classic'
+  AZ_APP: 'func-win-classic-app'               # Windows Function App (classic)
+  ARTIFACT_NAME: 'drop'
 
-  <groupId>com.example</groupId>
-  <artifactId>cosmos-trigger-poc</artifactId>
-  <version>1.0.0</version>
-  <packaging>jar</packaging>
+steps:
+- checkout: self
 
-  <properties>
-    <java.version>21</java.version>
-    <azure.functions.maven.plugin.version>1.21.0</azure.functions.maven.plugin.version>
-  </properties>
+- task: Maven@4
+  displayName: 'Build (mvn clean package)'
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-DskipTests'
+    jdkVersionOption: '1.21'
 
-  <dependencies>
-    <!-- Azure Functions Java SDK (v4 runtime compatible) -->
-    <dependency>
-      <groupId>com.microsoft.azure.functions</groupId>
-      <artifactId>azure-functions-java-library</artifactId>
-      <version>3.1.0</version>
-    </dependency>
+# Find Functions staging dir: target/azure-functions/<appName>/
+- powershell: |
+    $staging = Get-ChildItem -Recurse -Directory |
+      Where-Object { $_.FullName -match 'target\\azure-functions\\[^\\]+$' } |
+      Select-Object -First 1
+    if (-not $staging) { throw "Functions staging folder not found." }
+    echo "##vso[task.setvariable variable=STAGING_DIR]$($staging.FullName)"
+  displayName: 'Locate staging directory'
 
-    <!-- (optional) tests -->
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
-      <version>5.10.2</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-engine</artifactId>
-      <version>5.10.2</version>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
+- task: ArchiveFiles@2
+  displayName: 'Create ZIP from staging'
+  inputs:
+    rootFolderOrFile: '$(STAGING_DIR)'
+    includeRootFolder: false
+    archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    replaceExistingArchive: true
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.11.0</version>
-        <configuration>
-          <source>${java.version}</source>
-          <target>${java.version}</target>
-          <release>${java.version}</release>
-        </configuration>
-      </plugin>
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish artifact'
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: '$(ARTIFACT_NAME)'
 
-      <!-- Azure Functions Maven plugin -->
-      <plugin>
-        <groupId>com.microsoft.azure</groupId>
-        <artifactId>azure-functions-maven-plugin</artifactId>
-        <version>${azure.functions.maven.plugin.version}</version>
-        <configuration>
-          <runtime>
-            <os>Windows</os><!-- or Linux -->
-            <javaVersion>21</javaVersion>
-          </runtime>
-          <deploymentType>zip</deploymentType>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
-</project>
+# Deploy ZIP via Kudu (task handles classic plans well)
+- task: AzureFunctionApp@2
+  displayName: 'Deploy to Windows Function App (classic)'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    appName: '$(AZ_APP)'
+    package: '$(Build.ArtifactStagingDirectory)/functions.zip'
 
-host.json
+# Deterministic trigger registration
+- task: AzureCLI@2
+  displayName: 'Sync triggers'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    scriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az rest --method post `
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
 
-{
-  "version": "2.0",
-  "extensionBundle": {
-    "id": "Microsoft.Azure.Functions.ExtensionBundle",
-    "version": "[4.0.0, 5.0.0)"
-  }
-}
+
+
+======
+
+# windows-classic-cli.yml
+trigger: [ main ]
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  AZ_SUBSCRIPTION: 'My-Service-Connection'
+  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
+  AZ_RG: 'rg-func-win-classic'
+  AZ_APP: 'func-win-classic-app'
+
+steps:
+- checkout: self
+
+- task: Maven@4
+  displayName: 'Build (mvn clean package)'
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-DskipTests'
+    jdkVersionOption: '1.21'
+
+- powershell: |
+    $staging = Get-ChildItem -Recurse -Directory |
+      Where-Object { $_.FullName -match 'target\\azure-functions\$begin:math:display$^\\$end:math:display$+$' } |
+      Select-Object -First 1
+    if (-not $staging) { throw "Functions staging folder not found." }
+    $zipOut = "$(Build.ArtifactStagingDirectory)\functions.zip"
+    if (Test-Path $zipOut) { Remove-Item $zipOut -Force }
+    Compress-Archive -Path (Join-Path $staging.FullName '*') -DestinationPath $zipOut -Force
+    Write-Host "##vso[task.setvariable variable=ZIP_PATH]$zipOut"
+  displayName: 'Zip staging (PowerShell)'
+
+- task: AzureCLI@2
+  displayName: 'Deploy (config-zip) + Sync triggers'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    scriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az functionapp deployment source config-zip -g "$(AZ_RG)" -n "$(AZ_APP)" --src "$(ZIP_PATH)"
+      az rest --method post `
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
+
+
+=======
+
+# linux-classic-task.yml
+trigger: [ main ]
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  AZ_SUBSCRIPTION: 'My-Service-Connection'
+  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
+  AZ_RG: 'rg-func-linux-classic'
+  AZ_APP: 'func-linux-classic-app'
+  ARTIFACT_NAME: 'drop'
+
+steps:
+- checkout: self
+
+- task: Maven@4
+  displayName: 'Build (mvn clean package)'
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-DskipTests'
+    jdkVersionOption: '1.21'
+
+# Find staging and zip with task
+- bash: |
+    staging=$(find . -path "*/target/azure-functions/*" -type d -maxdepth 5 | head -n 1)
+    if [ -z "$staging" ]; then echo "Staging folder not found"; exit 1; fi
+    echo "##vso[task.setvariable variable=STAGING_DIR]$staging"
+  displayName: 'Locate staging directory'
+
+- task: ArchiveFiles@2
+  displayName: 'Create ZIP from staging'
+  inputs:
+    rootFolderOrFile: '$(STAGING_DIR)'
+    includeRootFolder: false
+    archiveFile: '$(Build.ArtifactStagingDirectory)/functions.zip'
+    replaceExistingArchive: true
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish artifact'
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: '$(ARTIFACT_NAME)'
+
+- task: AzureFunctionApp@2
+  displayName: 'Deploy to Linux Function App (classic)'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    appName: '$(AZ_APP)'
+    package: '$(Build.ArtifactStagingDirectory)/functions.zip'
+
+- task: AzureCLI@2
+  displayName: 'Sync triggers'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az rest --method post \
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
+
+======
+# linux-flex-consumption.yml
+trigger: [ main ]
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  AZ_SUBSCRIPTION: 'My-Service-Connection'
+  AZ_SUB_ID: '00000000-0000-0000-0000-000000000000'
+  AZ_RG: 'rg-func-linux-flex'
+  AZ_APP: 'func-linux-flex-app'     # Flex Function App (Linux only)
+
+steps:
+- checkout: self
+
+# 1️⃣ Build
+- task: Maven@4
+  displayName: 'Build Java Azure Function'
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-DskipTests'
+    jdkVersionOption: '1.21'
+
+# 2️⃣ Zip the Functions staging folder
+- bash: |
+    staging=$(find . -path "*/target/azure-functions/*" -type d -maxdepth 5 | head -n 1)
+    if [ -z "$staging" ]; then echo "Staging folder not found"; exit 1; fi
+    zipOut="$(dirname "$staging")/$(basename "$staging").zip"
+    (cd "$staging" && zip -r "$zipOut" .)
+    echo "##vso[task.setvariable variable=ZIP_PATH]$zipOut"
+  displayName: 'Create ZIP package'
+
+# 3️⃣ Deploy with OneDeploy
+- task: AzureCLI@2
+  displayName: 'Deploy ZIP to Flex Function App'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      # No WEBSITE_RUN_FROM_PACKAGE in Flex
+      az functionapp deploy --src-path "$(ZIP_PATH)" --type zip -g "$(AZ_RG)" -n "$(AZ_APP)"
+
+# 4️⃣ Sync triggers (must-have for Cosmos DB / Service Bus)
+- task: AzureCLI@2
+  displayName: 'Sync triggers (Flex)'
+  inputs:
+    azureSubscription: '$(AZ_SUBSCRIPTION)'
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az rest --method post \
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
+
