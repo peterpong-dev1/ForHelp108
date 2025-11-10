@@ -1,5 +1,84 @@
+Here’s the YAML pipeline text from the screenshots you uploaded, formatted so you can copy it directly:
+
+trigger:
+- main
+
+pool:
+  vmImage: "windows-latest"
+
+variables:
+  AZ_SUBSCRIPTION: "pooscrm" # DevOps service connection
+  AZ_SUB_ID: "3dadf24f-5dbf-452a-a420b-b152c587323c"
+  AZ_RG: "resourcegroup1"
+  AZ_APP: "pocfunctionapp" # Windows Function App (classic)
+  ARTIFACT_NAME: "drop"
+
+steps:
+- checkout: self
+
+# Build with Maven
+- task: Maven@4
+  displayName: "Build (mvn clean package)"
+  inputs:
+    mavenPomFile: "pom.xml"
+    goals: "clean package"
+    options: "-DskipTests"
+    jdkVersionOption: "1.21"
+
+# Download Datadog Java agent
 - script: |
-    mkdir "$(Build.SourcesDirectory)/datadog"
-    curl -L -o "$(Build.SourcesDirectory)/datadog/dd-java-agent.jar" \
-      https://dtdg.co/latest-java-tracer
+    curl -L --output "$(Build.SourcesDirectory)/dd-java-agent.jar" https://dtdg.co/latest-java-tracer
   displayName: "Download Datadog Java Agent"
+
+# Find functions staging dir
+- powershell: |
+    $staging = Get-ChildItem -Recurse -Directory |
+      Where-Object { $_.FullName -match 'target\\azure-functions\\([^\\]+)$' } |
+      Select-Object -First 1
+    if (-not $staging) { throw "Functions staging folder not found." }
+    echo "##vso[task.setvariable variable=STAGING_DIR]$($staging.FullName)"
+  displayName: "Locate staging directory"
+
+# Copy Datadog agent to staging folder
+- powershell: |
+    Write-Host "Copying Datadog agent to staging folder..."
+    Copy-Item "$(Build.SourcesDirectory)\dd-java-agent.jar" -Destination "$(STAGING_DIR)" -Force
+  displayName: "Copy Datadog agent to staging directory"
+
+# Create ZIP from staging folder
+- task: ArchiveFiles@2
+  displayName: "Create ZIP from staging"
+  inputs:
+    rootFolderOrFile: "$(STAGING_DIR)"
+    includeRootFolder: false
+    archiveFile: "$(Build.ArtifactStagingDirectory)/functions.zip"
+    replaceExistingArchive: true
+
+# Publish artifact
+- task: PublishBuildArtifacts@1
+  displayName: "Publish artifact"
+  inputs:
+    PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+    ArtifactName: "$(ARTIFACT_NAME)"
+
+# Deploy ZIP via Kudu (task handles classic plans well)
+- task: AzureFunctionApp@2
+  displayName: "Deploy to Windows Function App (classic)"
+  inputs:
+    azureSubscription: "$(AZ_SUBSCRIPTION)"
+    appName: "$(AZ_APP)"
+    package: "$(Build.ArtifactStagingDirectory)/functions.zip"
+
+# Deterministic trigger registration
+- task: AzureCLI@2
+  displayName: "Sync triggers"
+  inputs:
+    azureSubscription: "$(AZ_SUBSCRIPTION)"
+    scriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az rest --method post `
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2025-03-01"
+
+✅ Ready to copy and paste into your azure-pipelines.yml file.
+Would you like me to format it specifically for YAML validation (spacing verified and checked for Azure DevOps compatibility)?
