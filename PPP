@@ -1,163 +1,80 @@
-import com.azure.messaging.servicebus.*
-import com.azure.messaging.servicebus.models.*
+Perfect — that’s exactly the kind of edge-case thinking you need for production-grade code ✅
 
-// Get variables from JMeter
-String connectionString = vars.get("ConnectionString")
-String queueName = vars.get("QueueName")
+You’re saying:
 
-// Build a unique message per thread
-String messageBody = "This is message from thread " + vars.get("__threadNum") + " at " + System.currentTimeMillis()
+Only merge if both events actually exist in the map for that subtype.
+If either one is missing → skip (don’t create event1/event2).
 
-ServiceBusSenderClient sender = null
-try {
-    // Build the sender client
-    sender = new ServiceBusClientBuilder()
-        .connectionString(connectionString)
-        .sender()
-        .queueName(queueName)
-        .buildClient()
+Let’s refine the logic for that 👇
 
-    // Send the message
-    sender.sendMessage(new ServiceBusMessage(messageBody))
+⸻
 
-    // Mark JMeter result as successful
-    SampleResult.setSuccessful(true)
-    SampleResult.setResponseCode("200")
-    SampleResult.setResponseMessage("Message sent successfully")
-} catch (Exception e) {
-    SampleResult.setSuccessful(false)
-    SampleResult.setResponseCode("500")
-    SampleResult.setResponseMessage("Error: " + e.toString())
-    log.error("Failed to send to Service Bus: ", e)
-} finally {
-    if (sender != null) {
-        sender.close()
+🧩 Corrected and Safe Logic
+
+String eventA = "event1";
+String eventB = "event2";
+String mergedEvent = eventA + "/" + eventB;
+
+for (Map.Entry<String, Map<String, Integer>> entry : counts.entrySet()) {
+    Map<String, Integer> innerMap = entry.getValue();
+
+    // Check that both events exist
+    if (innerMap.containsKey(eventA) && innerMap.containsKey(eventB)) {
+        int mergedCount = innerMap.get(eventA) + innerMap.get(eventB);
+
+        // Add new merged event
+        innerMap.put(mergedEvent, mergedCount);
+
+        // Remove old ones
+        innerMap.remove(eventA);
+        innerMap.remove(eventB);
     }
 }
 
-====
-
-Excellent question 👏 — because this is the most important step before you upload to Azure Load Testing.
-You’ll use Maven outside JMeter (not inside it) just to download all the Azure SDK .jar dependencies easily.
-
-Let’s do it step by step 👇
 
 ⸻
 
-🧩 Goal:
+🧠 Why this version is “production-safe”
 
-Create a small Maven project → download Azure SDK JARs → copy them into JMeter → (or zip for Azure Load Testing).
-
-⸻
-
-⚙️ Step-by-Step
-
-1️⃣ Create a folder
-
-Make a folder anywhere (for example):
-
-C:\JMeterAzureLibs
-
+✅ No unnecessary updates – skips merge if only one event exists.
+✅ No null handling issues – checks containsKey before reading.
+✅ No ConcurrentModificationException – modifies only the inner map.
+✅ Clear intent – easy to maintain later.
 
 ⸻
 
-2️⃣ Create a Maven project
+⚙️ Optional: Reusable helper method
 
-You can do it manually without an IDE:
+If you’ll do this often (merging event pairs), wrap it in a method:
 
-Open a command prompt inside that folder and run:
+private static void mergeEventsIfBothExist(
+        Map<String, Map<String, Integer>> counts,
+        String eventA,
+        String eventB,
+        String mergedName) {
 
-mvn archetype:generate -DgroupId=com.example -DartifactId=azure-deps -DarchetypeArtifactId=maven-archetype-quickstart -DinteractiveMode=false
+    for (Map<String, Integer> innerMap : counts.values()) {
+        if (innerMap.containsKey(eventA) && innerMap.containsKey(eventB)) {
+            int mergedCount = innerMap.get(eventA) + innerMap.get(eventB);
+            innerMap.put(mergedName, mergedCount);
+            innerMap.remove(eventA);
+            innerMap.remove(eventB);
+        }
+    }
+}
 
-This will create:
+Usage:
 
-C:\JMeterAzureLibs\azure-deps
-   ├── pom.xml
-   └── src\
+mergeEventsIfBothExist(counts, "event1", "event2", "event1/event2");
 
 
 ⸻
 
-3️⃣ Edit the pom.xml
+🚫 Don’t do this inside your main for (TableEntity e : rows) loop
 
-Open pom.xml and replace everything inside with this 👇
-
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-
-    <groupId>com.example</groupId>
-    <artifactId>azure-deps</artifactId>
-    <version>1.0</version>
-
-    <dependencies>
-        <!-- Azure Service Bus SDK -->
-        <dependency>
-            <groupId>com.azure</groupId>
-            <artifactId>azure-messaging-servicebus</artifactId>
-            <version>7.17.2</version>
-        </dependency>
-
-        <!-- Logging (optional but recommended) -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.12</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.12</version>
-        </dependency>
-    </dependencies>
-</project>
-
+Still true — never merge while counting.
+Always build your counts first, then merge afterward in a second pass.
 
 ⸻
 
-4️⃣ Download all dependencies
-
-Run this command inside your azure-deps folder:
-
-mvn dependency:copy-dependencies
-
-This will create:
-
-target/dependency/
-
-Inside, you’ll find all .jar files you need — including Azure SDK and its transitive dependencies (reactor, netty, etc.).
-
-⸻
-
-5️⃣ Use these jars in JMeter
-
-You now have two options:
-
-Option A – Local JMeter run
-Copy everything from target/dependency/ to:
-
-C:\Softwares\apache-jmeter-5.6.3\lib\ext
-
-Restart JMeter.
-
-Option B – Azure Load Testing
-Zip the files:
-
-cd target/dependency
-zip -r dependencies.zip *
-
-Then upload dependencies.zip in the Azure Load Test portal (next to your .jmx file).
-
-⸻
-
-✅ End Result
-
-Now your JMeter test can:
-	•	Import com.azure.messaging.servicebus.*
-	•	Run locally and in Azure Load Testing
-	•	Work without missing class errors
-
-⸻
-
-Would you like me to show you exactly which JARs will appear in target/dependency/ (so you can verify it’s complete)?
+Would you like me to show how to handle multiple merge pairs at once (e.g., merge “start/stop”, “open/close”, etc.) in one clean loop? That’s a common next step.
