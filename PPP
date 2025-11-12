@@ -77,4 +77,74 @@ Always build your counts first, then merge afterward in a second pass.
 
 ⸻
 
+=======
+
+Yes — absolutely possible 👍
+
+You can transform those Kanji event names into the merged format you described using Java string logic.
+
+Let’s break down your pattern first:
+
+You have pairs like:
+
+A B
+C B
+
+and you want:
+
+A / C B
+
+Here, the last part (B) is shared, and you want to merge the unique prefixes (A and C) before it.
+
+⸻
+
+🧩 Example Input
+
+String eventA = "漢字一漢字二";  // Kanji1 Kanji2
+String eventB = "漢字三漢字二";  // Kanji3 Kanji2
+
+🎯 Desired Output
+
+漢字一 / 漢字三漢字二
+
+
+⸻
+
+✅ Implementation
+
+If the common suffix (“Kanji2”) is known (or can be detected), you can build it like this:
+
+private static String mergeKanjiNames(String eventA, String eventB) {
+    // Find the common suffix between the two strings
+    int minLen = Math.min(eventA.length(), eventB.length());
+    int i = 1;
+    while (i <= minLen && eventA.charAt(eventA.length() - i) == eventB.charAt(eventB.length() - i)) {
+        i++;
+    }
+
+    // Common suffix (shared ending)
+    String suffix = eventA.substring(eventA.length() - i + 1);
+    // Unique parts (prefixes)
+    String prefixA = eventA.substring(0, eventA.length() - suffix.length());
+    String prefixB = eventB.substring(0, eventB.length() - suffix.length());
+
+    // Merge in your desired format
+    return prefixA + " / " + prefixB + suffix;
+}
+
+🧠 Example Usage
+
+System.out.println(mergeKanjiNames("漢字一漢字二", "漢字三漢字二"));
+
+💡 Output
+
+漢字一 / 漢字三漢字二
+
+
+⸻
+
+Would you like me to show a version that automatically merges all pairs in a map using this Kanji-aware rule (like your earlier event merge logic)?
+
+
+
 Would you like me to show how to handle multiple merge pairs at once (e.g., merge “start/stop”, “open/close”, etc.) in one clean loop? That’s a common next step.
