@@ -145,6 +145,30 @@ System.out.println(mergeKanjiNames("漢字一漢字二", "漢字三漢字二"));
 
 Would you like me to show a version that automatically merges all pairs in a map using this Kanji-aware rule (like your earlier event merge logic)?
 
+====
+
+FUNCTIONS_EXTENSION_VERSION
+~4
+FUNCTIONS_WORKER_RUNTIME
+java
+WEBSITE_RUN_FROM_PACKAGE
+1
+JAVA_OPTS
+-javaagent:%HOME%\site\wwwroot\dd-java-agent.jar -Ddd.service=cosmoschangefeed -Ddd.env=dev -Ddd.version=1.0 -Ddd.logs.injection=true -Ddd.trace.enabled=true
+DD_API_KEY
+<your Datadog API key>
+DD_SITE
+ap1.datadoghq.com (or your site, e.g., datadoghq.com, us5.datadoghq.com depending on your account)
+DD_ENV
+dev
+DD_SERVICE
+cosmoschangefeedfunction
+DD_LOGS_ENABLED
+true
+DD_TRACE_ENABLED
+true
+DD_PROFILING_ENABLED
+true
 
 
 Would you like me to show how to handle multiple merge pairs at once (e.g., merge “start/stop”, “open/close”, etc.) in one clean loop? That’s a common next step.
