@@ -1,174 +1,79 @@
-Perfect — that’s exactly the kind of edge-case thinking you need for production-grade code ✅
+pool:
+  vmImage: 'ubuntu-latest'
 
-You’re saying:
+steps:
 
-Only merge if both events actually exist in the map for that subtype.
-If either one is missing → skip (don’t create event1/event2).
+# Build Java Function
+- task: Maven@4
+  displayName: "Build (mvn clean package)"
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-DskipTests'
+    jdkVersionOption: '1.21'
 
-Let’s refine the logic for that 👇
+# Download Datadog Java agent
+- script: |
+    curl -L -o "$(Build.SourcesDirectory)/dd-java-agent.jar" https://dtdg.co/latest-java-tracer
+  displayName: "Download Datadog Java Agent"
 
-⸻
+# Locate staging directory (target/azure-functions/<appName>)
+- script: |
+    echo "Searching for function staging directory..."
+    STAGING_DIR=$(find target -type d -path "*/azure-functions/*" | head -n 1)
+    if [ -z "$STAGING_DIR" ]; then
+      echo "ERROR: Staging directory not found."
+      exit 1
+    fi
+    echo "Found staging directory: $STAGING_DIR"
+    echo "##vso[task.setvariable variable=STAGING_DIR]$STAGING_DIR"
+  displayName: "Locate staging directory"
+  shell: bash
 
-🧩 Corrected and Safe Logic
+# Copy Datadog agent into staging directory
+- script: |
+    cp "$(Build.SourcesDirectory)/dd-java-agent.jar" "$STAGING_DIR"
+    echo "Datadog agent added."
+  displayName: "Copy Datadog agent to staging"
 
-String eventA = "event1";
-String eventB = "event2";
-String mergedEvent = eventA + "/" + eventB;
+# Create ZIP package
+- task: ArchiveFiles@2
+  displayName: "Create ZIP from staging"
+  inputs:
+    rootFolderOrFile: "$(STAGING_DIR)"
+    includeRootFolder: false
+    archiveFile: "$(Build.ArtifactStagingDirectory)/functions.zip"
+    replaceExistingArchive: true
 
-for (Map.Entry<String, Map<String, Integer>> entry : counts.entrySet()) {
-    Map<String, Integer> innerMap = entry.getValue();
+# Publish artifact
+- task: PublishBuildArtifacts@1
+  displayName: "Publish artifact"
+  inputs:
+    PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+    ArtifactName: "functions"
 
-    // Check that both events exist
-    if (innerMap.containsKey(eventA) && innerMap.containsKey(eventB)) {
-        int mergedCount = innerMap.get(eventA) + innerMap.get(eventB);
+# Deploy ZIP to Linux Function App (Premium)
+- task: AzureCLI@2
+  displayName: "Deploy to Linux Function App"
+  inputs:
+    azureSubscription: "$(AZ_SUBSCRIPTION)"
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      echo "Deploying ZIP to Linux Function App..."
+      az functionapp deployment source config-zip \
+        --resource-group "$(AZ_RG)" \
+        --name "$(AZ_APP)" \
+        --src "$(Build.ArtifactStagingDirectory)/functions.zip"
 
-        // Add new merged event
-        innerMap.put(mergedEvent, mergedCount);
-
-        // Remove old ones
-        innerMap.remove(eventA);
-        innerMap.remove(eventB);
-    }
-}
-
-
-⸻
-
-🧠 Why this version is “production-safe”
-
-✅ No unnecessary updates – skips merge if only one event exists.
-✅ No null handling issues – checks containsKey before reading.
-✅ No ConcurrentModificationException – modifies only the inner map.
-✅ Clear intent – easy to maintain later.
-
-⸻
-
-⚙️ Optional: Reusable helper method
-
-If you’ll do this often (merging event pairs), wrap it in a method:
-
-private static void mergeEventsIfBothExist(
-        Map<String, Map<String, Integer>> counts,
-        String eventA,
-        String eventB,
-        String mergedName) {
-
-    for (Map<String, Integer> innerMap : counts.values()) {
-        if (innerMap.containsKey(eventA) && innerMap.containsKey(eventB)) {
-            int mergedCount = innerMap.get(eventA) + innerMap.get(eventB);
-            innerMap.put(mergedName, mergedCount);
-            innerMap.remove(eventA);
-            innerMap.remove(eventB);
-        }
-    }
-}
-
-Usage:
-
-mergeEventsIfBothExist(counts, "event1", "event2", "event1/event2");
-
-
-⸻
-
-🚫 Don’t do this inside your main for (TableEntity e : rows) loop
-
-Still true — never merge while counting.
-Always build your counts first, then merge afterward in a second pass.
-
-⸻
-
-=======
-
-Yes — absolutely possible 👍
-
-You can transform those Kanji event names into the merged format you described using Java string logic.
-
-Let’s break down your pattern first:
-
-You have pairs like:
-
-A B
-C B
-
-and you want:
-
-A / C B
-
-Here, the last part (B) is shared, and you want to merge the unique prefixes (A and C) before it.
-
-⸻
-
-🧩 Example Input
-
-String eventA = "漢字一漢字二";  // Kanji1 Kanji2
-String eventB = "漢字三漢字二";  // Kanji3 Kanji2
-
-🎯 Desired Output
-
-漢字一 / 漢字三漢字二
-
-
-⸻
-
-✅ Implementation
-
-If the common suffix (“Kanji2”) is known (or can be detected), you can build it like this:
-
-private static String mergeKanjiNames(String eventA, String eventB) {
-    // Find the common suffix between the two strings
-    int minLen = Math.min(eventA.length(), eventB.length());
-    int i = 1;
-    while (i <= minLen && eventA.charAt(eventA.length() - i) == eventB.charAt(eventB.length() - i)) {
-        i++;
-    }
-
-    // Common suffix (shared ending)
-    String suffix = eventA.substring(eventA.length() - i + 1);
-    // Unique parts (prefixes)
-    String prefixA = eventA.substring(0, eventA.length() - suffix.length());
-    String prefixB = eventB.substring(0, eventB.length() - suffix.length());
-
-    // Merge in your desired format
-    return prefixA + " / " + prefixB + suffix;
-}
-
-🧠 Example Usage
-
-System.out.println(mergeKanjiNames("漢字一漢字二", "漢字三漢字二"));
-
-💡 Output
-
-漢字一 / 漢字三漢字二
-
-
-⸻
-
-Would you like me to show a version that automatically merges all pairs in a map using this Kanji-aware rule (like your earlier event merge logic)?
-
-====
-
-FUNCTIONS_EXTENSION_VERSION
-~4
-FUNCTIONS_WORKER_RUNTIME
-java
-WEBSITE_RUN_FROM_PACKAGE
-1
-JAVA_OPTS
--javaagent:%HOME%\site\wwwroot\dd-java-agent.jar -Ddd.service=cosmoschangefeed -Ddd.env=dev -Ddd.version=1.0 -Ddd.logs.injection=true -Ddd.trace.enabled=true
-DD_API_KEY
-<your Datadog API key>
-DD_SITE
-ap1.datadoghq.com (or your site, e.g., datadoghq.com, us5.datadoghq.com depending on your account)
-DD_ENV
-dev
-DD_SERVICE
-cosmoschangefeedfunction
-DD_LOGS_ENABLED
-true
-DD_TRACE_ENABLED
-true
-DD_PROFILING_ENABLED
-true
-
-
-Would you like me to show how to handle multiple merge pairs at once (e.g., merge “start/stop”, “open/close”, etc.) in one clean loop? That’s a common next step.
+# Sync triggers (Linux required)
+- task: AzureCLI@2
+  displayName: "Sync triggers"
+  inputs:
+    azureSubscription: "$(AZ_SUBSCRIPTION)"
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      echo "Syncing triggers..."
+      az rest --method post \
+        --url "https://management.azure.com/subscriptions/$(AZ_SUB_ID)/resourceGroups/$(AZ_RG)/providers/Microsoft.Web/sites/$(AZ_APP)/syncfunctiontriggers?api-version=2022-03-01"
