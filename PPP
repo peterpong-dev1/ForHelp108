@@ -1,1 +1,230 @@
-https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fus3.datadoghq.com%2Fapi%2Fv1%2Fintegrations%2Fazure%2Farm_template
+Here is your text formatted exactly word-for-word, with no changes at all.
+Only formatting (spacing, indentation, code blocks) is applied — the content is identical.
+
+⸻
+
+This is a great architectural decision. Decoupling Extraction (getting the data) from Validation (checking the data) makes your code much easier to test and maintain.
+Here is the solution split into two distinct parts.
+
+⸻
+
+Part 1: The Extractor Service
+
+Goal: Input is JSON string + Config. Output is a Map<String, String> of AgentID -> AgencyNumber.
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.logging.Logger;
+
+public class AgentExtractionService {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Logger logger = Logger.getLogger(AgentExtractionService.class.getName());
+
+    /**
+     * Extracts Agent ID and Agency Number based on the provided configuration.
+     * @return Map where Key = Agent ID, Value = Agency Number
+     */
+    public Map<String, String> extractAgentMap(String jsonBody, ValidationConfig config) {
+        Map<String, String> extractedMap = new HashMap<>();
+
+        try {
+            if (jsonBody == null || jsonBody.isEmpty()) {
+                return extractedMap; // Return empty map if input is invalid
+            }
+
+            JsonNode root = objectMapper.readTree(jsonBody);
+            JsonNode targetNode = root;
+
+            // 1. Navigate to the Root Node if configured
+            if (isValid(config.getRootNode())) {
+                if (root.has(config.getRootNode())) {
+                    targetNode = root.get(config.getRootNode());
+                } else {
+                    return extractedMap; // Root node missing, nothing to extract
+                }
+            }
+
+            // 2. Extract based on structure (Array vs Single Object)
+            if (isValid(config.getArrayNode())) {
+                // Case: Data is inside an array
+                if (targetNode.has(config.getArrayNode())) {
+                    JsonNode arrayNode = targetNode.get(config.getArrayNode());
+                    if (arrayNode.isArray()) {
+                        for (JsonNode item : arrayNode) {
+                            addToMapIfValid(item, config, extractedMap);
+                        }
+                    }
+                } else if (targetNode.isArray() && config.getArrayNode().equals("agency")) { 
+                    // Special Case: The root itself might be the array (Container 3 context)
+                     for (JsonNode item : targetNode) {
+                        addToMapIfValid(item, config, extractedMap);
+                    }
+                }
+            } else {
+                // Case: Data is a single object
+                addToMapIfValid(targetNode, config, extractedMap);
+            }
+
+        } catch (Exception e) {
+            logger.severe("Error extracting agent data: " + e.getMessage());
+            // We swallow the exception and return partial/empty results to ensure flow continues
+        }
+
+        return extractedMap;
+    }
+
+    /**
+     * Helper to extract fields and put them into the map if they are valid.
+     */
+    private void addToMapIfValid(JsonNode node, ValidationConfig config, Map<String, String> map) {
+        String agentId = getNodeText(node, config.getAgentIdField());
+        String agencyNum = getNodeText(node, config.getAgencyNumberField());
+
+        // Only add if both fields are present and not empty/hyphens
+        if (isValidValue(agentId) && isValidValue(agencyNum)) {
+            map.put(agentId, agencyNum);
+        }
+    }
+
+    private String getNodeText(JsonNode node, String fieldName) {
+        return (node != null && node.has(fieldName)) ? node.get(fieldName).asText() : "";
+    }
+
+    private boolean isValidValue(String val) {
+        return val != null && !val.trim().isEmpty() && !"-".equals(val);
+    }
+
+    private boolean isValid(String configStr) {
+        return configStr != null && !configStr.isEmpty();
+    }
+}
+
+
+⸻
+
+Part 2: The Validator Service
+
+Goal: Input is the Map from Part 1. Output is a List<String> of only the allowed Agent IDs.
+This class includes a method to load your “Allowed List” config file.
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Logger;
+
+public class AgentValidationService {
+
+    private final Logger logger = Logger.getLogger(AgentValidationService.class.getName());
+    
+    // In-memory cache of the allowed list (AgentID -> AllowedAgencyNumber)
+    private Map<String, String> allowedListCache;
+
+    public AgentValidationService() {
+        this.allowedListCache = new HashMap<>();
+    }
+
+    /**
+     * Step 1: Load the allowed list from your config file.
+     * Call this once during Function Initialization.
+     */
+    public void loadAllowedList(String configFilePath) {
+        try {
+            // Mocking the file read. In reality, you would use ObjectMapper to read a JSON/CSV file.
+            // Example structure: {"04DJCCF00": "60004", "04DJXYZ01": "40001"}
+            
+            // For now, I will simulate adding the data based on your screenshots
+            allowedListCache.put("04DJCCF00", "60004"); 
+            allowedListCache.put("04DJXYZ013808", "40001");
+            
+            logger.info("Allowed list loaded. Total entries: " + allowedListCache.size());
+        } catch (Exception e) {
+            logger.severe("Failed to load allowed list config: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Step 2: Validate the extracted map against the allowed list.
+     * @param extractedData Map of AgentID -> AgencyNumber (from Extractor Service)
+     * @return List of Agent IDs that PASSED validation.
+     */
+    public List<String> getAllowedAgents(Map<String, String> extractedData) {
+        List<String> validAgents = new ArrayList<>();
+
+        if (extractedData == null || extractedData.isEmpty()) {
+            return validAgents;
+        }
+
+        for (Map.Entry<String, String> entry : extractedData.entrySet()) {
+            String inputAgentId = entry.getKey();
+            String inputAgencyNum = entry.getValue();
+
+            // LOGIC: Check if Agent exists AND Agency Number matches
+            if (allowedListCache.containsKey(inputAgentId)) {
+                String expectedAgencyNum = allowedListCache.get(inputAgentId);
+                
+                if (expectedAgencyNum.equals(inputAgencyNum)) {
+                    validAgents.add(inputAgentId);
+                    logger.info("Validation PASSED for Agent: " + inputAgentId);
+                } else {
+                    logger.warning("Validation FAILED for Agent: " + inputAgentId + ". Expected: " + expectedAgencyNum + ", Found: " + inputAgencyNum);
+                }
+            } else {
+                logger.warning("Validation FAILED: Agent " + inputAgentId + " is not in the allowed list.");
+            }
+        }
+
+        return validAgents;
+    }
+}
+
+
+⸻
+
+How to Integrate (The “Glue” Code)
+
+In your Azure Function trigger, you now just chain these two steps together.
+
+public class MyCosmosTrigger {
+
+    // 1. Initialize Services
+    private final AgentExtractionService extractor = new AgentExtractionService();
+    private final AgentValidationService validator = new AgentValidationService();
+    
+    // 2. Load Configs (Do this in a @PostConstruct or static block if possible)
+    public MyCosmosTrigger() {
+        // Load the allowed list once when function starts
+        validator.loadAllowedList("/path/to/allowed_agents_config.json");
+    }
+
+    @FunctionName("CosmosDBTrigger")
+    public void run(@CosmosDBTrigger(...) String[] documents, final ExecutionContext context) {
+        
+        // Assume you determine which container config to use here
+        ValidationConfig currentContainerConfig = getConfigForCurrentContainer(); 
+
+        for (String doc : documents) {
+            
+            // STEP A: Extract
+            Map<String, String> agentMap = extractor.extractAgentMap(doc, currentContainerConfig);
+
+            // STEP B: Validate
+            List<String> allowedAgentIds = validator.getAllowedAgents(agentMap);
+
+            // STEP C: Use the result
+            if (!allowedAgentIds.isEmpty()) {
+                context.getLogger().info("Processing allowed agents: " + allowedAgentIds);
+                // Proceed with business logic for these agents
+            }
+        }
+    }
+}
+
+
+⸻
+
+If you want, I can also format this into a clean PDF, Markdown file, or JavaDoc-style documentation.
