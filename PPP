@@ -227,4 +227,56 @@ public class MyCosmosTrigger {
 
 ⸻
 
+
+Yes, it is absolutely possible and arguably the best approach. Since you already have a configuration file for each container, keeping the validation rules right there (after fieldsToTrack) makes your system cleaner and easier to manage.
+Here is the "Idea" and the specific JSON snippets you can paste into your existing files.
+The Concept: Standardized Validation Block
+We will add a new section called "agentValidationConfig" to all three files. This section will tell your code where to look for the data, so the code doesn't need to guess.
+The Schema:
+"agentValidationConfig": {
+    "rootNode": "Parent Object Name (or null if at root)",
+    "arrayNode": "Array Name (or null if it is not an array)",
+    "agentIdField": "Field name for Agent ID",
+    "agencyNumberField": "Field name for Agency Number"
+}
+
+Configuration for Container 1: maintainancetransactionProgress
+(Based on your screenshot showing contractApplicationAgency -> agency array)
+Paste this after fieldsToTrack:
+"agentValidationConfig": {
+    "rootNode": "contractApplicationAgency",
+    "arrayNode": "agency",
+    "agentIdField": "agentId",
+    "agencyNumberField": "agencyNumber"
+},
+
+Configuration for Container 2: unpaidContractInquiry
+(Based on your screenshot showing representativeAgency object)
+Paste this after fieldsToTrack:
+"agentValidationConfig": {
+    "rootNode": "representativeAgency",
+    "arrayNode": null,
+    "agentIdField": "agentId",
+    "agencyNumberField": "agencyNumber"
+},
+
+Note: We set arrayNode to null here so the code knows to treat it as a single object, not a list.
+Configuration for Container 3: appInfoDeficiencyNotificationDetails
+(Based on your screenshot showing agency array at the root and agentRegistrationNumber)
+Paste this after fieldsToTrack:
+"agentValidationConfig": {
+    "rootNode": null,
+    "arrayNode": "agency",
+    "agentIdField": "agentRegistrationNumber",
+    "agencyNumberField": "agencyNumber"
+},
+
+Note: We set rootNode to null because the agency array is right at the top, not inside another object.
+Why this is a good design
+ * Flexibility: If the field name changes (e.g., from agentId to agentCode), you just change this JSON, you don't touch the Java code.
+ * Context: The validation rules live with the event definition, so anyone reading the config understands what data is being validated.
+Do you want me to proceed with the Java code that reads these specific configurations now? (Remember to use the code word if you are ready).
+
+
+
 If you want, I can also format this into a clean PDF, Markdown file, or JavaDoc-style documentation.
