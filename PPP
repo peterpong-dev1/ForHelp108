@@ -1,101 +1,97 @@
-Here is your method formatted cleanly and consistently, with no changes to your logic or wording — only indentation, spacing, and structure improved for readability.
-
-public Map<String, Object> extractData(String documentJson, Config config) {
-    Map<String, Object> extractedMap = new HashMap<>();
-
-    // Initial check for null or empty input JSON string
-    if (documentJson == null || documentJson.trim().isEmpty()) {
-        logger.warn("Input documentJson is null or empty.");
-        return extractedMap; // Return empty map if input is invalid
-    }
+public Map<String, String> extractAgentMap(String documentJson, AgencyValidationConfig config, Map<String, String> mapForLogs) {
+    Map<String, String> extractedMap = new HashMap<>();
+    
+    // Initial check for null or empty input JSON string (Keep this)
+    // ...
 
     try {
-        // 1. Read the JSON document
+        // 1. Read the JSON document (Keep this)
         JsonNode documentNode = objectMapper.readTree(documentJson);
-        // documentNode is safe to use here, but will be 'MissingNode' if readTree fails (handled by try/catch)
-        JsonNode targetNode = documentNode;
+        
+        // Retrieve the list of root nodes from the updated config class
+        List<String> rootPaths = config.getRootNodes();
 
-        // 2. Navigate to the Root Node if configured
-        if (isValid(config.getRootNode())) {
-            String rootNodePath = config.getRootNode();
-
-            // Check if the root node path exists in the document
-            if (documentNode.has(rootNodePath)) {
-                targetNode = documentNode.get(rootNodePath);
-
-                // Check if the retrieved node is null (though 'has' usually prevents this, it's safer)
-                if (targetNode == null) {
-                    logger.error("Configured Root Node '{}' found but its value is null.", rootNodePath);
-                    return extractedMap;
+        // Check if root nodes are configured and process them
+        if (rootPaths != null && !rootPaths.isEmpty()) {
+            
+            for (String rootPath : rootPaths) {
+                
+                // Skip processing if the path is null or empty
+                if (!isValid(rootPath)) {
+                    continue;
                 }
-            } else {
-                logger.warn("Configured Root Node '{}' is missing in the document. Cannot extract.", rootNodePath);
-                return extractedMap; // Root node missing, nothing to extract
-            }
-        }
 
-        // ---
+                JsonNode targetNode = documentNode; // Start target from the root document
 
-        // 3. Extract based on structure (Array vs Single Object)
+                // Check if the current root node path exists in the document
+                if (documentNode.has(rootPath)) {
+                    targetNode = documentNode.get(rootPath);
 
-        // Ensure targetNode is not null before proceeding
-        if (targetNode == null) {
-            logger.error("Target node is null after root node navigation.");
-            return extractedMap;
-        }
-
-        if (isValid(config.getArrayNode())) {
-
-            // Case: Data is inside an array defined by a path (e.g., "data": [...])
-            String arrayNodePath = config.getArrayNode();
-
-            // Check if the array path exists in the current target node
-            if (targetNode.has(arrayNodePath)) {
-                JsonNode arrayNode = targetNode.get(arrayNodePath);
-
-                // *** Robust Check 1: Check if the retrieved node is actually an array ***
-                if (arrayNode != null && arrayNode.isArray()) {
-                    for (JsonNode item : arrayNode) {
-                        // Check if the item is an Object/Value before attempting to process
-                        if (item != null) {
-                            addtoMapIfValid(item, config, extractedMap);
-                        }
+                    // Check if the retrieved node is null
+                    if (targetNode == null || targetNode.isNull()) {
+                        logger.warn("Configured Root Node '{}' found but its value is null. Skipping.", rootPath);
+                        continue;
                     }
+
+                    // 3. Extract based on structure (Array vs Single Object)
+                    if (targetNode == null) {
+                        logger.error("Target node is null after root node navigation.");
+                        continue;
+                    }
+
+                    // Check for the configured array path (e.g., "data": [...])
+                    if (isValid(config.getArrayNode())) {
+                        String arrayNodePath = config.getArrayNode();
+                        
+                        // Check if the array path exists in the current target node
+                        if (targetNode.has(arrayNodePath)) {
+                            JsonNode arrayNode = targetNode.get(arrayNodePath);
+                            
+                            // Ensure the retrieved node is an array
+                            if (arrayNode != null && arrayNode.isArray()) {
+                                for (JsonNode item : arrayNode) {
+                                    if (item != null) {
+                                        addtoMapIfValid(item, config, extractedMap);
+                                    }
+                                }
+                            } else {
+                                logger.error("Configured array node '{}' is present but not a valid JSON array in root '{}'.",
+                                        arrayNodePath, rootPath);
+                            }
+
+                        } else {
+                            // Fall through to single object extraction
+                        }
+
+                    } else if (targetNode.isArray()) {
+                        // Case: Root node itself is an array
+                        for (JsonNode item : targetNode) {
+                            if (item != null) {
+                                addtoMapIfValid(item, config, extractedMap);
+                            }
+                        }
+
+                    } else if (targetNode.isObject()) {
+                        // Case: Single object
+                        addtoMapIfValid(targetNode, config, extractedMap);
+
+                    } else {
+                        logger.warn("Target node '{}' is neither Array nor Object. Extraction skipped.", rootPath);
+                    }
+
                 } else {
-                    logger.error("Configured array node '{}' is present but is not a valid JSON array.", arrayNodePath);
+                    logger.debug("Configured Root Node '{}' is missing in the document.", rootPath);
                 }
 
-            } else {
-                logger.debug("Configured array node '{}' is missing. Falling through to single object extraction.", arrayNodePath);
-            }
-
-        } else if (targetNode.isArray()) {
-
-            // Special Case: The target node itself (the root or configured root) is the array [Container]
-            // *** Robust Check 2: targetNode is already verified as not null and is an array ***
-            for (JsonNode item : targetNode) {
-                if (item != null) {
-                    addtoMapIfValid(item, config, extractedMap);
-                }
-            }
-
-        } else if (targetNode.isObject()) {
-
-            // Case: Data is a single object (or targetNode is an Object and no array config was given)
-            // *** Robust Check 3: targetNode is an Object (to avoid processing simple string/number roots) ***
-            addtoMapIfValid(targetNode, config, extractedMap);
+            } // end for rootPaths
 
         } else {
-            logger.warn("Target node is neither an Array nor an Object. Extraction skipped. Type: {}", 
-                        targetNode.getNodeType());
+            logger.warn("No root nodes configured for extraction.");
         }
 
     } catch (Exception e) {
         logger.error("Error extracting agent data: " + e.getMessage(), e);
-        // return partial/empty results to ensure flow continues
     }
 
-    return extractedMap;
+    return extractedMap; // Return map containing extracted values
 }
-
-If you want, I can also format the helper methods (addToMapIfValid, isValid, etc.) in the same style.
