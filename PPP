@@ -1,99 +1,35 @@
-public Map<String, String> extractAgentMap(String documentJson, 
-                                           AgencyValidationConfig config, 
-                                           Map<String, String> mapForLogs) {
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager; // Import this
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
-    Map<String, String> extractedMap = new HashMap<>();
+@Configuration
+public class RestClientConfig {
 
-    try {
-        // ---------------------------
-        // 1. Read JSON
-        // ---------------------------
-        JsonNode documentNode = objectMapper.readTree(documentJson);
+    @Bean
+    public RestTemplate restTemplate() {
 
-        // ---------------------------
-        // 2. Get configured root node list
-        // ---------------------------
-        List<String> rootPaths = config.getRootNodes();
+        // 1. Configure Connection Pooling (CRITICAL for Service Bus)
+        PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
+        connectionManager.setMaxTotal(200);        // Total connections allowed globally
+        connectionManager.setDefaultMaxPerRoute(50); // Max connections to ONE server (Synergy)
+        // Set this to match your Service Bus 'maxConcurrentSessions'
 
-        if (rootPaths == null || rootPaths.isEmpty()) {
-            logger.warn("No root nodes configured for extraction.");
-            return extractedMap;
-        }
+        // 2. Build the Client with the Pool
+        CloseableHttpClient httpClient = HttpClients.custom()
+                .setConnectionManager(connectionManager)
+                .build();
 
-        // ---------------------------
-        // 3. Iterate through EACH root path
-        // ---------------------------
-        for (String rootPath : rootPaths) {
+        HttpComponentsClientHttpRequestFactory factory =
+                new HttpComponentsClientHttpRequestFactory(httpClient);
 
-            JsonNode targetNode;
+        // 3. Timeouts (Updated to your preference)
+        factory.setConnectTimeout(3000);  // 3s (Connect fast or fail)
+        factory.setReadTimeout(50000);    // 50s (Wait for slow email server)
 
-            // Case B: null or empty → use document root
-            if (rootPath == null || rootPath.trim().isEmpty()) {
-                targetNode = documentNode;
-            }
-            // Case A: named node
-            else {
-                if (documentNode.has(rootPath)) {
-                    targetNode = documentNode.get(rootPath);
-                } else {
-                    logger.debug("Configured Root Node '{}' is missing. Skipping extraction for this root.", rootPath);
-                    continue;
-                }
-            }
-
-            // Validate node content
-            if (targetNode == null || targetNode.isNull()) {
-                logger.warn("Target node for root '{}' is null. Skipping.", rootPath);
-                continue;
-            }
-
-            // ---------------------------
-            // 4. EXTRACTION LOGIC (Step 3)
-            // ---------------------------
-            String arrayPath = config.getArrayNode();
-
-            // Case 1: Configured array node exists under the target node
-            if (isValid(arrayPath) && targetNode.has(arrayPath)) {
-
-                JsonNode arrayNode = targetNode.get(arrayPath);
-
-                if (arrayNode != null && arrayNode.isArray()) {
-
-                    for (JsonNode item : arrayNode) {
-                        if (item != null) {
-                            addtoMapIfValid(item, config, extractedMap);
-                        }
-                    }
-
-                } else {
-                    logger.error("Configured array node '{}' is present but NOT a JSON array.", arrayPath);
-                }
-            }
-            // Case 2: targetNode itself is an array
-            else if (targetNode.isArray()) {
-
-                for (JsonNode item : targetNode) {
-                    if (item != null) {
-                        addtoMapIfValid(item, config, extractedMap);
-                    }
-                }
-            }
-            // Case 3: targetNode is an object
-            else if (targetNode.isObject()) {
-
-                addtoMapIfValid(targetNode, config, extractedMap);
-            }
-            // Case 4: Unsupported
-            else {
-                logger.warn("Target node for root '{}' is neither Object nor Array. Skipping.", rootPath);
-            }
-        }
+        return new RestTemplate(factory);
     }
-    catch (Exception e) {
-        logger.error("Error extracting agent data: {}", e.getMessage(), e);
-        mapForLogs.put("JSON_ERROR", "Error extracting agent data: " + e.getMessage());
-        // Flow continues — return partial results
-    }
-
-    return extractedMap;
 }
