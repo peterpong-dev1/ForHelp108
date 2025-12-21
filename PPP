@@ -1,35 +1,206 @@
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.impl.conn.PoolingHttpClientConnectionManager; // Import this
-import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+Below is your fully formatted, structured version of the integration guide.
+No logic has been changed — this is strictly a readability and organization pass.
 
-@Configuration
-public class RestClientConfig {
+⸻
 
-    @Bean
-    public RestTemplate restTemplate() {
+Complete Guide: Integrating the Two-Pass Rule Evaluation Safely
 
-        // 1. Configure Connection Pooling (CRITICAL for Service Bus)
-        PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        connectionManager.setMaxTotal(200);        // Total connections allowed globally
-        connectionManager.setDefaultMaxPerRoute(50); // Max connections to ONE server (Synergy)
-        // Set this to match your Service Bus 'maxConcurrentSessions'
+This guide explains how to integrate the new logic into EventProcessing.java using three small, controlled updates.
+The goal is to fix the equalsOrChangedTo behavior without breaking existing production configurations.
 
-        // 2. Build the Client with the Pool
-        CloseableHttpClient httpClient = HttpClients.custom()
-                .setConnectionManager(connectionManager)
-                .build();
+⸻
 
-        HttpComponentsClientHttpRequestFactory factory =
-                new HttpComponentsClientHttpRequestFactory(httpClient);
+Update 1: Add the Helper Class
 
-        // 3. Timeouts (Updated to your preference)
-        factory.setConnectTimeout(3000);  // 3s (Connect fast or fail)
-        factory.setReadTimeout(50000);    // 50s (Wait for slow email server)
+Go to the very bottom of your EventProcessing class (just before the final closing brace }) and add the following static helper class.
 
-        return new RestTemplate(factory);
+This allows us to store rule evaluation results cleanly without using risky maps or local classes.
+
+// --- PASTE THIS AT THE BOTTOM OF EventProcessing CLASS ---
+
+private static class RuleResult {
+
+    boolean matches;   // Does the value currently match the expectation?
+    boolean changed;   // Did this field actually change in this update?
+    String op;         // Operator used (e.g., "equalsOrChangedTo")
+
+    public RuleResult(boolean matches, boolean changed, String op) {
+        this.matches = matches;
+        this.changed = changed;
+        this.op = op;
     }
 }
+
+
+⸻
+
+Update 2: Replace the evaluate Method
+
+Replace your entire existing evaluate method with the version below.
+This implements the safe two-pass evaluation logic while isolating new behavior.
+
+// --- REPLACE YOUR EXISTING evaluate METHOD WITH THIS ---
+
+public static boolean evaluate(
+        EventConfig.Event evt,
+        boolean isCreate,
+        ObjectNode newDoc,
+        ObjectNode baseline,
+        List<ChangeInfo> deltas
+) {
+
+    // 1. Pre-checks (keep your existing logic here)
+    if (isCreate && !evt.allowInsert()) {
+        return false;
+    }
+    if (!isCreate && !evt.allowUpdate()) {
+        return false;
+    }
+
+    // Build the index of what changed
+    Map<String, ChangeInfo> idx =
+            isCreate ? Collections.emptyMap() : indexByFieldPath(deltas);
+
+    // --- NEW LOGIC STARTS HERE ---
+
+    List<RuleResult> results = new ArrayList<>();
+    boolean usesEqualsOrChangedTo = false;
+
+    // PASS 1: GATHER DATA
+    // Evaluate "matches" and "changed" independently for each rule
+    for (EventConfig.Rule r : evt.getConditions().getRules()) {
+
+        // Check if the value matches expectations
+        // Uses the RELAXED equalsOrChangedTo helper
+        boolean matches = evalRule(r, isCreate, newDoc, baseline, idx);
+
+        // Check if this field actually changed in this update
+        boolean changed = idx.containsKey(safe(r.getField()));
+
+        // Store the result
+        results.add(new RuleResult(matches, changed, r.getOp()));
+
+        // Track whether the new operator is present
+        if ("equalsOrChangedTo".equals(r.getOp())) {
+            usesEqualsOrChangedTo = true;
+        }
+    }
+
+    // PASS 2: DECISION LOGIC
+
+    // --- AND LOGIC ---
+    if (evt.getConditions().isAnd()) {
+
+        boolean allMatch = true;
+        boolean atLeastOneChange = false;
+
+        for (RuleResult res : results) {
+
+            if (!res.matches) {
+                allMatch = false;
+                break; // Standard AND behavior
+            }
+
+            if (res.changed) {
+                atLeastOneChange = true;
+            }
+        }
+
+        // Isolation:
+        // Only enforce "at least one change" when equalsOrChangedTo is used.
+        // This preserves legacy behavior for all other operators.
+        if (usesEqualsOrChangedTo) {
+            return allMatch && atLeastOneChange;
+        } else {
+            return allMatch;
+        }
+    }
+
+    // --- OR LOGIC ---
+    if (evt.getConditions().isOr()) {
+
+        for (RuleResult res : results) {
+
+            // Skip non-matching rules
+            if (!res.matches) {
+                continue;
+            }
+
+            // equalsOrChangedTo requires a real change in OR conditions
+            if ("equalsOrChangedTo".equals(res.op)) {
+                if (res.changed) {
+                    return true;
+                }
+            }
+            // All other operators trigger immediately on match
+            else {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Default fallback (should not normally be reached)
+    return false;
+}
+
+
+⸻
+
+Update 3: Update the equalsOrChangedTo Helper
+
+Find your existing equalsOrChangedTo helper and replace it with this relaxed version.
+
+This method must return true even for static matches — strictness is now handled by the two-pass logic above.
+
+// --- UPDATE THIS HELPER METHOD ---
+
+private static boolean equalsOrChangedTo(
+        boolean isCreate,
+        String path,
+        ObjectNode newDoc,
+        ChangeInfo c,
+        String expected
+) {
+    if (isCreate) {
+        return equalsNow(path, newDoc, expected);
+    }
+
+    // RELAXED CHECK:
+    // If there was no change, still allow a static match.
+    // The evaluation loop will decide whether a change is required.
+    if (c == null) {
+        return equalsNow(path, newDoc, expected);
+    }
+
+    // If there WAS a change, validate the new value
+    JsonNode newValue = c.getNewValue();
+    return newValue != null
+            && expected != null
+            && expected.equals(newValue.asText());
+}
+
+
+⸻
+
+Summary
+
+This integration provides:
+	•	Safety
+New behavior is isolated to equalsOrChangedTo.
+Existing operators (becameNotNull, eq, etc.) behave exactly as before.
+	•	Accuracy
+	•	AND: allows static + changed fields but requires at least one real change
+	•	OR: prevents static matches from firing events
+	•	Low Risk
+No global refactors, no behavior changes for legacy configurations.
+	•	Clean Code
+Uses a small inner class instead of maps or fragile index coupling.
+
+⸻
+
+If you want, I can next:
+	•	Walk through a real config example step by step
+	•	Provide a minimal regression test checklist
+	•	Help you write a safe rollout / rollback plan
