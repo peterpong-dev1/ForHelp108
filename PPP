@@ -24,3 +24,196 @@ Quick Team Summary: "What Changed?"
  * Static Data is Protected: If the document is updated but the specific fields in your configuration weren't touched, no notification will fire.
  * Creation is Always a Trigger: We bypass the "Change" check for new records (isCreate), ensuring that the very first time a document matches your rules, the notification goes out.
 Would you like me to provide the final, complete code block for EventProcessing.java one last time to ensure all these table cases are perfectly implemented?
+
+This is an excellent request. A flowchart is the best way to visualize this "Two-Pass" logic because it clearly separates gathering information from making the decision.
+I have designed a simplified flowchart that highlights the key concepts:
+ * Separation: Pass 1 (Fact Gathering) vs. Pass 2 (Decision).
+ * The "Trigger": Showing that a "Match" alone isn't always enough; you need a "Trigger" (either a new change or a fresh create).
+ * Spam Protection: Explicitly showing the "Negative Path" where static data is ignored.
+Here is the Draw.io XML code.
+How to use this code:
+ * Go to draw.io (it's free and runs in the browser).
+ * In the menu bar, go to Arrange -> Insert -> Advanced -> From Text...
+ * Paste the entire block of code below into the text box and click Import.
+<!-- end list -->
+<mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" background="#ffffff" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+    <mxCell id="EventStart" value="Start: Evaluate Event" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+      <mxGeometry x="320" y="40" width="160" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="Pass1Container" value="PASS 1: Gathering Facts (Loop through all rules)" style="swimlane;html=1;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=0;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="140" y="130" width="520" height="180" as="geometry" />
+    </mxCell>
+    <mxCell id="CheckMatch" value="Fact 1: Does it Match?&#xa;(Check current value using helper methods like eqDate, etc.)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="Pass1Container">
+      <mxGeometry x="30" y="50" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="CheckChange" value="Fact 2: Did it Change?&#xa;(Is this specific field in the ChangeInfo map?)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="Pass1Container">
+      <mxGeometry x="290" y="50" width="200" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="ResultsList" value="Store Facts List:&#xa;[(Match=T, Changed=F), (Match=T, Changed=T), ...]" style="shape=internalStorage;whiteSpace=wrap;html=1;dx=15;dy=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+      <mxGeometry x="240" y="350" width="320" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="Pass2Container" value="PASS 2: Making the Decision" style="swimlane;html=1;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="450" width="720" height="380" as="geometry" />
+    </mxCell>
+    <mxCell id="LogicTypeDec" value="What is the&#xa;Logic Type?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="Pass2Container">
+      <mxGeometry x="310" y="50" width="120" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="AndLogicReq1" value="Requirement 1:&#xa;Are ALL Rules currently matches?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="Pass2Container">
+      <mxGeometry x="80" y="160" width="160" height="90" as="geometry" />
+    </mxCell>
+    <mxCell id="AndLogicReq2" value="Requirement 2 (The Trigger):&#xa;Is it a CREATE op&#xa;OR&#xa;did AT LEAST ONE rule change?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="Pass2Container">
+      <mxGeometry x="65" y="280" width="190" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="OrLogicCheck" value="Scan for ANY matching rule" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="Pass2Container">
+      <mxGeometry x="480" y="160" width="180" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="OrStrictCheck" value="Is the match a strict operator&#xa;(equalsOrChangedTo)&#xa;AND static (no change)?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="Pass2Container">
+      <mxGeometry x="475" y="240" width="190" height="110" as="geometry" />
+    </mxCell>
+    <mxCell id="ResultTrigger" value="TRIGGER EVENT&#xa;(Positive Case)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+      <mxGeometry x="320" y="870" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="ResultIgnore" value="IGNORE EVENT&#xa;(Negative / Spam Protection)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+      <mxGeometry x="50" y="870" width="220" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="ResultIgnoreOr" value="IGNORE EVENT&#xa;(No Matches Found)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+      <mxGeometry x="610" y="870" width="160" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="edge1" edge="1" parent="1" source="EventStart" target="Pass1Container">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="edge2" edge="1" parent="1" source="Pass1Container" target="ResultsList">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="edge3" edge="1" parent="1" source="ResultsList" target="Pass2Container">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="edge4" edge="1" parent="Pass2Container" source="LogicTypeDec" target="AndLogicReq1">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint as="offset" />
+      </mxGeometry>
+      <mxCell value="AND Logic" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge4">
+        <mxGeometry x="-0.2" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge5" edge="1" parent="Pass2Container" source="LogicTypeDec" target="OrLogicCheck">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint as="offset" />
+      </mxGeometry>
+      <mxCell value="OR Logic" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge5">
+        <mxGeometry x="-0.2" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge6" edge="1" parent="Pass2Container" source="AndLogicReq1" target="AndLogicReq2">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint as="offset" />
+      </mxGeometry>
+      <mxCell value="Yes (All Match)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge6">
+        <mxGeometry x="-0.2" y="1" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge7" edge="1" parent="1" source="AndLogicReq2" target="ResultTrigger">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="190" y="850" />
+          <mxPoint x="400" y="850" />
+        </Array>
+      </mxGeometry>
+      <mxCell value="Yes (Trigger Found)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge7">
+        <mxGeometry x="-0.1333" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge8" edge="1" parent="1" source="AndLogicReq1" target="ResultIgnore">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="60" y="655" />
+          <mxPoint x="60" y="840" />
+          <mxPoint x="160" y="840" />
+        </Array>
+      </mxGeometry>
+      <mxCell value="No" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge8">
+        <mxGeometry x="-0.5389" y="1" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge9" edge="1" parent="1" source="AndLogicReq2" target="ResultIgnore">
+      <mxGeometry relative="1" as="geometry" />
+      <mxCell value="No (Static Data)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontStyle=1;fontColor=#FF0000;" vertex="1" connectable="0" parent="edge9">
+        <mxGeometry x="-0.2" y="2" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge10" edge="1" parent="Pass2Container" source="OrLogicCheck" target="OrStrictCheck">
+      <mxGeometry relative="1" as="geometry" />
+      <mxCell value="Found Match" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge10">
+        <mxGeometry x="-0.2" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge11" edge="1" parent="1" source="OrStrictCheck" target="ResultIgnore">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="510" y="840" />
+          <mxPoint x="220" y="840" />
+        </Array>
+      </mxGeometry>
+      <mxCell value="Yes (Block Spam)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontStyle=1;fontColor=#FF0000;" vertex="1" connectable="0" parent="edge11">
+        <mxGeometry x="-0.12" y="1" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge12" edge="1" parent="1" source="OrStrictCheck" target="ResultTrigger">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="710" y="745" />
+          <mxPoint x="710" y="850" />
+          <mxPoint x="420" y="850" />
+        </Array>
+      </mxGeometry>
+      <mxCell value="No (Valid Trigger)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge12">
+        <mxGeometry x="-0.2286" y="-1" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="edge13" edge="1" parent="1" source="OrLogicCheck" target="ResultIgnoreOr">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="790" y="635" />
+          <mxPoint x="790" y="820" />
+          <mxPoint x="690" y="820" />
+        </Array>
+      </mxGeometry>
+      <mxCell value="No Matches" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="edge13">
+        <mxGeometry x="-0.6718" relative="1" as="geometry">
+          <mxPoint as="offset" />
+        </mxGeometry>
+      </mxCell>
+    </mxCell>
+    <mxCell id="note1" value="Key Concept:&#xa;The &quot;Trigger&quot; Check&#xa;prevents spam when data&#xa;is correct but didn't change." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffc0;strokeColor=#ff0000;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="330" width="170" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="edgeNote" edge="1" parent="1" source="note1" target="ResultsList">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>
+
+
+
+
